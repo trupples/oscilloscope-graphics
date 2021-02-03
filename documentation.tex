@@ -9,6 +9,11 @@
 \usepackage{hyperref}
 \usepackage{subcaption}
 \usepackage[dvipsnames]{xcolor}
+\usepackage[toc,page]{appendix}
+\usepackage{multicol}
+\usepackage{inconsolata}
+\usepackage{listings}
+\lstset{basicstyle=\ttfamily\footnotesize}
 \hypersetup{
     colorlinks=true,
     linkcolor=RoyalPurple,   
@@ -44,64 +49,133 @@
 \makeatother
 
 \begin{abstract}
-\noindent Displaying line art on an oscilloscope in XY mode is a common entry level electronics project, which is much beloved by hobbyists worldwide, both for the ease of obtaining minimally functional graphics, as well as the plentiful challenging enhancements it often requires. We aim to display arbitrary animations at a smooth frame rate (50Hz), with a resolution finer than the trace width (cca. 0.5mm), and covering as much of the 10x6cm screen of the Telequipment D54 as possible. Breaking down the system we identify six successive steps from concept to displayed graphics: Graphics design, Path optimisation, Compressed encoding, Transmission, Decompression, Signal generation and display, each of which can be individually optimised once some general parameters are established, such as the expected resolution. <TODO: overview results>
+\noindent Displaying line art on an oscilloscope in XY mode is a common entry level electronics project, which is much beloved by hobbyists worldwide, both for the ease of obtaining minimally functional graphics, as well as the plentiful challenging enhancements it often invites. We aim to display both static vector art, as well as animations at a perceptually smooth refresh rate, while providing a resolution finer than the trace width (cca. 0.5mm), and covering as much of the 10x6cm screen of the Telequipment D54 as possible. We develop a hardware and software stack that enables programming an Arduino MKR Vidor 4000 with static vector art, as well as streaming live animations at 192000 points/second via USB.
 
 \end{abstract}
 
-\setcounter{tocdepth}{2}
+%\setcounter{tocdepth}{2}
 \tableofcontents
+
+\newpage
+
+%\includegraphics[width=\textwidth]{}
 
 \section{Introduction}
 
-Mama tata
+In the 1960s and 1970s, CRT vector displays were an important advancement in computer graphics technology, a natural follow-up to the oscilloscope displays developed since the early 1900s. As opposed to raster CRT displays (as found in TV sets) which have a fixed beam path and modulate its intensity, vector displays have a mostly fixed electron beam intensity and control its position, tracing arbitrary monochrome paths on the screen. Vector displays were used with early CAD software (Ivan Sutherland's Sketchpad, 1963) and fighter aircraft HUDs, but notably also entered the home market and gained some popularity with the advent of vector arcade games in the 1980s. Games such as Asteroids and the Vectrex console have been since remembered for their distinct graphics style, and so displaying vector graphics on a CRT screen, usually that of an oscilloscope in XY mode, remains a common hobbyist project to this day.
 
-\section{Background}
+Controlling a vector display consists in coordinating two waveforms -- one for the horizontal beam deflection and one for the vertical beam deflection, to position the electron beam arbitrarily on the screen. Due to persistence of vision and the CRT phosphor's slow decay, the fast beam motion looks like streaks of light on the screen. Using this mechanism, various line graphics can be displayed.
 
-TODO: Cover various kinds of DACs, especially the limitations of PWM with smoothing, gray code DACs which prevent glitches, sigma-delta DACs, etc
-
-TODO: Cover other similar projects and Jerobeam Fenderson's music as inspiration
+We aim to develop an easily programmable system for processing vector graphics on a computer, transmitting the data to an Arduino, and generating the corresponding signals on the device. 
 
 \section{Signal generation, display characteristics}
 
-To confirm the feasibility of the project, we start with a rudimentary software stack that enables programming an Arduino with a fixed, two-channel waveform corresponding to the X and Y coordinates of a point walking along a given path. At the hardware level, we require two DACs of sufficient resolution, which motivates our choice of the Arduino MKR Vidor 4000, since it has a builtin 10-bit DAC, meaning we only have to implement a single DAC externally.
+To confirm the feasibility of the project, we start with a rudimentary software stack that enables programming an Arduino with a fixed, two-channel waveform corresponding to the X and Y coordinates of a point walking along a given path. The software consists of some javascript code that converts the first svg <path> of the current document into a C header file containing a list of points (\autoref{appendix:svg2header}) and some Arduino code that iterates through the generated points and outputs each coordinate pair to the suitable ports (\autoref{appendix:staticvector}). At the hardware level, we require two DACs of sufficient resolution, which motivates our choice of the Arduino MKR Vidor 4000, since it has a builtin 10-bit DAC, meaning we only have to implement a single DAC externally.
 
-One of the requirements for a pleasant and smooth appearance is that we have control over the position of the beam in increments smaller than half the width of the beam itself. (Fig. \ref{fig:low-resolution}) By some crude measurements, our device's beam is approximately 0.5 -- 0.6mm in diameter. To span 6cm vertically in increments less than 0.25mm, we require 240 distinct voltage levels, and thus at least 8 bits resolution for the vertical channel. Similarly, the horizontal channel requires at least \( \log_2{10\text{cm}/0.25\text{mm}} \approx 8.6 \) bits. Therefore we chose to use the built-in 10-bit DAC for the horizontal channel and to build an external 8-bit DAC for the vertical channel.
+One of the requirements for a pleasant and smooth appearance is that we have control over the position of the beam in increments smaller than half the width of the beam itself. (\autoref{fig:low-resolution}) By some crude measurements, our device's beam is approximately 0.5 -- 0.6mm in diameter. To span 6cm vertically in increments less than 0.25mm, we require 240 distinct voltage levels, and thus at least 8 bits resolution for the vertical channel. Similarly, the horizontal channel requires at least \( \log_2{10\text{cm}/0.25\text{mm}} \approx 8.6 \) bits. Therefore we chose to use the built-in 10-bit DAC for the horizontal channel and to build an external 8-bit DAC for the vertical channel.
 
-DAC design choice is a significant factor in both circuit complexity, cost, and the quality of the resulting graphics. We chose an R-2R design for its relative simplicity, in spite of the expected DAC glitches (Fig. \ref{fig:vertical-dac-glitches}) that appear when passing between points at a large Hamming distance but small Euclidean distance. (i.e., at coordinates at 1/2, 1/4, 3/4, etc. vertically within the screen)
+DAC design choice is a significant factor in both circuit complexity, cost, and the quality of the resulting graphics. We chose an R-2R ladder design for its relative simplicity, in spite of the expected DAC glitches (\autoref{fig:vertical-dac-glitches}) that appear when passing between points at a large Hamming distance but small Euclidean distance. (i.e., at coordinates at 1/2, 1/4, 3/4, etc. vertically along the screen space)
 
-\begin{figure}
+To counteract such glitches, we ought to set all the output pins to their correct states at the same time, instead of setting each bit of the output sequentially. The Arduino standard library provides direct access to the PORTA register of the SAMD21 board, whose value is a bitmap of the digital values of 32 input or output pins. We use the Arduino pins 6, 7, 8, 9, 10, 11, 12, 3 (LSB to MSB) to control the resistor ladder, and these correspond to bits 20, 21, 16, 17, 19, 8, 9, 11 of the PORTA register. We apply the following bitwise permutation to obtain a value for the PORTA register given a desired 8 bit DAC output "Y", and assign all the bits at once:
+
+\begin{lstlisting}
+PORT->Group[PORTA].OUT.reg = ((Y & 0b11) << 20) |     // PA20, PA21
+                             ((Y & 0b1100) << 14) |   // PA16, PA17
+                             ((Y & 0b10000) << 15) |  // PA19
+                             ((Y & 0b1100000) << 3) | // PA8, PA9
+                             ((Y & 0b10000000) << 4); // PA11         
+\end{lstlisting}
+\noindent By doing so, the delay between the different pins being set to the correct value is far below noticeable, thus mostly solving the issue of DAC glitches. For improved performace, we precompute a lookup table for the 256 possible bit patterns, reducing the time to output an analog value from 23 instructions down to 5, (\autoref{appendix:lutoptimisation}) with a memory cost of 1KB.
+
+Regardless of DAC design, an issue arises whereby signal bandwidth limitations (mostly justified by parasitic capacitance) in both the DAC, the scope probes, and the oscilloscope, will lead to ringing artifacts (\autoref{fig:ringing}) at high enough drawing speeds.
+
+\begin{figure}[p]
 \centering
-\includegraphics[width=0.8\textwidth]{images/low-resolution.png}\quad
-\caption{Low resolution leads to noticeable discrete points}
+\includegraphics[width=0.99\textwidth]{images/low-resolution.png}
+\caption{Low resolution leads to noticeably discrete points}
 \label{fig:low-resolution}
 \end{figure}
 
-\begin{figure}
+\begin{figure}[p]
 \centering
-\includegraphics[width=0.4\textwidth]{images/vertical-dac-glitches1.png}\quad
-\includegraphics[width=0.4\textwidth]{images/vertical-dac-glitches2.png}
-\caption{Vertical DAC glitches look like spikes at certain Y values}
+\includegraphics[width=0.49\textwidth]{images/vertical-dac-glitches1.png}\hspace{0.01\textwidth}
+\includegraphics[width=0.49\textwidth]{images/vertical-dac-glitches2.png}
+\caption{Glitches of the vertical DAC look like spikes at certain Y values}
 \label{fig:vertical-dac-glitches}
 \end{figure}
 
+\begin{figure}[p]
+\centering
+\includegraphics[width=0.49\textwidth]{images/ringing-2d.png}\hspace{0.01\textwidth}
+\includegraphics[width=0.49\textwidth]{images/ringing-1d.png}
+\caption{Ringing and parasitic capacitance artifacts, as seen in the final image (unwanted wisps trailing off objects' corners), as well as in a Y coordinate/time graph (slow voltage transitions, unwanted oscillations).}
+\label{fig:ringing}
+\end{figure}
 
-\section{Transmission benchmarking}
+\section{Oscilloscope music}
 
-How fast can we transmit stuff over USB to the Arduino?
+Among prior art, so called "Oscilloscope music", especially \href{https://www.youtube.com/playlist?list=PLFgoUhNvMLrr8izq38HX6rjFR-nkfklxw}{Jerobeam Fenderson's work}, stands out for its exquisite combination of graphics and sound as part of the same medium. Such works of art meticulously coordinate the two waveforms to both draw discernible shapes and animations, as well as to sound like music if interpreted as sound instead of beam coordinates.
 
-\section{Compressed encoding and decoding}
+To be able to display such works, we implement an audio streaming system, whereby the controlling computer sends uncompressed 18-bit-per-sample, 192KHz sample rate audio, and the controlled Arduino receives the data and displays it.
 
-Given transfer rate limits, test some compression schemes both in: how many points can they send per frame (one 50th of a second)? how fast can the arduino decompress the data once sent?
+TODO
 
-We suppose the controlling computer has enough computational power for it not to matter. Latency is also not an issue as long as the output refresh rate is consistent.
+\newpage
+\begin{appendices}
+\section{SVG path to C header conversion}
+\label{appendix:svg2header}
+\lstinputlisting{convert-svg-to-header.js}
 
-\section{Path optimisation}
+\newpage
+\section{Basic signal generation}
+\label{appendix:staticvector}
+\lstinputlisting{static-vector/static-vector.ino}
 
-2OPT with a custom path distance function and like 100 random starting positions to get a relatively ok path in the end
+\newpage
+\section{Dissasembly comparison of bitmap calculation versus lookup}
+\label{appendix:lutoptimisation}
 
-\section{Graphics design}
+\begin{multicols}{2}
 
-??????????????? How do we actually design/make animations ?????????
+\noindent Computing bit pattern online:
+\begin{lstlisting}
+MOVS    R0, #0x80
+LDRB    R2, [R7,#2]
+LSLS    R0, R0, #0xC
+LSLS    R3, Y, #0x14
+LSLS    R1, Y, #0xE
+ANDS    R1, R5
+ANDS    R3, R6
+ORRS    R3, R1
+LSLS    R1, Y, #0xF
+ANDS    R1, R0
+MOVS    R0, #0xC0
+ORRS    R3, R1
+LSLS    R0, R0, #2
+LSLS    R1, Y, #3
+ANDS    R1, R0
+ORRS    R3, R1
+MOVS    R1, #0x80
+LSLS    Y, Y, #4
+LSLS    R1, R1, #4
+ANDS    R2, R1
+ORRS    R3, R2
+LDR     R2, =0x41004400
+STR     R3, [R2,#0x10]
+\end{lstlisting}
 
+\columnbreak
+\noindent Using a lookup table of precomputed bit patterns:
 
+\begin{lstlisting}
+LDR     R3, =porta_bitmap_lut
+LSLS    R5, R5, #2
+LDR     R2, [R5,R3]
+LDR     R3, =0x41004400
+STR     R2, [R3,#0x10]
+\end{lstlisting}
+
+\end{multicols}
+
+\end{appendices}
 \end{document}
