@@ -53,12 +53,9 @@
 
 \end{abstract}
 
-%\setcounter{tocdepth}{2}
 \tableofcontents
 
 \newpage
-
-%\includegraphics[width=\textwidth]{}
 
 \section{Introduction}
 
@@ -68,13 +65,27 @@ Controlling a vector display consists in coordinating two waveforms -- one for t
 
 We aim to develop an easily programmable system for processing vector graphics on a computer, transmitting the data to an Arduino, and generating the corresponding signals on the device. 
 
-\section{Signal generation, display characteristics}
+\newpage
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.9\textwidth]{images/demo-tucn.png}
+\caption{Full display of the TUCN logo}
+\end{figure}
+\vspace{-1em} % Ugly hack to prevent a widow
+\section{Static signal generation}
 
-To confirm the feasibility of the project, we start with a rudimentary software stack that enables programming an Arduino with a fixed, two-channel waveform corresponding to the X and Y coordinates of a point walking along a given path. The software consists of some javascript code that converts the first svg <path> of the current document into a C header file containing a list of points (\autoref{appendix:svg2header}) and some Arduino code that iterates through the generated points and outputs each coordinate pair to the suitable ports (\autoref{appendix:staticvector}). At the hardware level, we require two DACs of sufficient resolution, which motivates our choice of the Arduino MKR Vidor 4000, since it has a builtin 10-bit DAC, meaning we only have to implement a single DAC externally.
+To confirm the feasibility of the project, we start with a rudimentary software stack that enables programming an Arduino with a fixed, two-channel waveform corresponding to the X and Y coordinates of a point walking along a given path. The software consists of some javascript code that converts the first SVG <path> of the current document into a C header file containing a list of points (\autoref{appendix:svg2header}) and some Arduino code that iterates through the generated points and outputs each coordinate pair to the suitable ports (\autoref{appendix:staticvector}). At the hardware level, we require two DACs of sufficient resolution and sample rate, which motivates our choice of the Arduino MKR Vidor 4000, since it has a builtin 10-bit DAC, meaning we only have to implement a single DAC externally.
 
-One of the requirements for a pleasant and smooth appearance is that we have control over the position of the beam in increments smaller than half the width of the beam itself. (\autoref{fig:low-resolution}) By some crude measurements, our device's beam is approximately 0.5 -- 0.6mm in diameter. To span 6cm vertically in increments less than 0.25mm, we require 240 distinct voltage levels, and thus at least 8 bits resolution for the vertical channel. Similarly, the horizontal channel requires at least \( \log_2{10\text{cm}/0.25\text{mm}} \approx 8.6 \) bits. Therefore we chose to use the built-in 10-bit DAC for the horizontal channel and to build an external 8-bit DAC for the vertical channel.
+One of the requirements for a pleasant appearance is that we have control over the position of the beam in increments smaller than half the width of the beam itself. (\autoref{fig:low-resolution}) By some crude measurements, our device's beam is approximately 0.5 in diameter. To span 6cm vertically in increments less than 0.25mm, we require 240 distinct voltage levels, and thus at least 8 bits resolution for the vertical channel. Similarly, the horizontal channel requires at least \( \log_2{10\text{cm}/0.25\text{mm}} \approx 8.6 \) bits. Therefore we chose to use the built-in 10-bit DAC for the horizontal channel and to build an external 8-bit DAC for the vertical channel.
 
-DAC design choice is a significant factor in both circuit complexity, cost, and the quality of the resulting graphics. We chose an R-2R ladder design for its relative simplicity, in spite of the expected DAC glitches (\autoref{fig:vertical-dac-glitches}) that appear when passing between points at a large Hamming distance but small Euclidean distance. (i.e., at coordinates at 1/2, 1/4, 3/4, etc. vertically along the screen space)
+% http://falstad.com/circuit/circuitjs.html?ctz=CQAgjCAMB0l3BWcMBMcUHYMGZIA4UA2ATmIxAUgpABZsAoAJxGxRGMJbbGLarXhMu4Xu048+yQcw4juhKhKhS4Q2evGj+8SELAKx4A0u3SQAWlZzhJlbuaW2sx9dOqHspS9tgdQ8xoWnlogAu4W+oqiAZqSvmbmkYaJxiFh9hYoKDTWKVFxfg5ZOc7FrqGFmXh4uWU+leYo1clNNbbp-tgI3NGt5R0A5hZdPWyW3aHZyroA7kb5oQixUPQAHsOEENHY+uxIOVMAMgDKAEJrIiWc2ZyktKE5ALJn9Gjkjc2lzXhUOQAKAEsAHYAHQAzoRXpB3mVSlMfvdAaCwRgoe8ks4kgj-sDwXg0UFbpwYiBsSAkeDiASXM4rGSKWDfASrLI6b9ybjGWACYFZPTOWAUASMeIDPzkQwAPKLZaYUbTegAeweIEIOV+kDuMB0GEIKGI2GINAQOxQSG18DIhCWZuUbCmDCAA
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.99\textwidth]{images/r2r-circuit.png}
+\caption{R-2R resistor ladder circuit for generating the vertical deflection signal}
+\end{figure}
+
+DAC design choice is a significant factor in both circuit complexity, cost, and the quality of the resulting graphics. We chose an R-2R ladder design for its relative simplicity, in spite of the expected DAC glitches (\autoref{fig:vertical-dac-glitches}) that appear when passing between points at a large Hamming distance but small Euclidean distance. (i.e., at coordinates at 1/2, 1/4, 3/4, etc. vertically along the screen)
 
 To counteract such glitches, we ought to set all the output pins to their correct states at the same time, instead of setting each bit of the output sequentially. The Arduino standard library provides direct access to the PORTA register of the SAMD21 board, whose value is a bitmap of the digital values of 32 input or output pins. We use the Arduino pins 6, 7, 8, 9, 10, 11, 12, 3 (LSB to MSB) to control the resistor ladder, and these correspond to bits 20, 21, 16, 17, 19, 8, 9, 11 of the PORTA register. We apply the following bitwise permutation to obtain a value for the PORTA register given a desired 8 bit DAC output "Y", and assign all the bits at once:
 
@@ -87,7 +98,7 @@ PORT->Group[PORTA].OUT.reg = ((Y & 0b11) << 20) |     // PA20, PA21
 \end{lstlisting}
 \noindent By doing so, the delay between the different pins being set to the correct value is far below noticeable, thus mostly solving the issue of DAC glitches. For improved performace, we precompute a lookup table for the 256 possible bit patterns, reducing the time to output an analog value from 23 instructions down to 5, (\autoref{appendix:lutoptimisation}) with a memory cost of 1KB.
 
-Regardless of DAC design, an issue arises whereby signal bandwidth limitations (mostly justified by parasitic capacitance) in both the DAC, the scope probes, and the oscilloscope, will lead to ringing artifacts (\autoref{fig:ringing}) at high enough drawing speeds.
+Regardless of DAC design, an issue arises whereby signal bandwidth limitations (mostly justified by parasitic capacitance) in both the DAC, the scope probes, and the oscilloscope, will lead to ringing artifacts (\autoref{fig:ringing}) at high enough drawing speeds. We will not attempt to prevent these kinds of errors.
 
 \begin{figure}[p]
 \centering
@@ -112,7 +123,7 @@ Regardless of DAC design, an issue arises whereby signal bandwidth limitations (
 \label{fig:ringing}
 \end{figure}
 
-\section{Oscilloscope music}
+\section{Oscilloscope music, animations}
 
 Among prior art, so called "Oscilloscope music", especially \href{https://www.youtube.com/playlist?list=PLFgoUhNvMLrr8izq38HX6rjFR-nkfklxw}{Jerobeam Fenderson's work}, stands out for its exquisite combination of graphics and sound as part of the same medium. Such works of art meticulously coordinate the two waveforms to both draw discernible shapes and animations, as well as to sound like music if interpreted as sound instead of beam coordinates.
 
