@@ -70,6 +70,7 @@ We aim to develop an easily programmable system for processing vector graphics o
 \centering
 \includegraphics[width=0.85\textwidth]{images/demo-tucn.png}
 \caption{Full display of the TUCN logo}
+\label{fig:tucn-full}
 \end{figure}
 \section{Static signal generation}
 
@@ -128,7 +129,7 @@ Among prior art, so called "Oscilloscope music", especially \href{https://www.yo
 
 To be able to display such works, we implement a signal streaming system, whereby the controlling computer sends uncompressed 18-bit-per-sample, 192KHz sample rate audio, and the controlled Arduino receives the data and displays it. While in principle this seems like a rather basic task, in practice it is riddled with various challenges. Ideally, we would send one sample at a time, and while the computer waits for the correct time for the next sample, the beam would stay still on the current sample, but this very inefficiently uses the USB protocol and is very slow, not allowing us to achieve 192KHz. We must group together multiple samples in so-called frames, and have the Arduino cycle through the samples of each frame in the time it takes to receive the next frame. The issue that arises is related to the fact that we cannot control the beam intensity, so when the Arduino is waiting and processing serial data, the beam will stay put for a significant period of time, accumulating to a bright spot on the screen. The longer the frames, the more time it will spend receiving and not moving the beam, leading to a tradeoff between frame lengths and image quality. (\autoref{fig:recv-alias})
 
-Another quality optimisation we considered was taking advantage of the Arduino's behaviour of interrupting on received data. If we send the frame in equally-spaced sub-frame chunks, the "bright spots" won't only appear at frame boundaries, but also whenever the Arduino is interrupted during the actual drawing. This will have the effect of spreading out the brightness discrepancies (\autoref{fig:interrupt-hack}), but is limited, because if we split the frames too much we will arrive at the first issue of inefficiently using the USB protocol and bottlenecking the transfer rate. In the end, the results were virtually identical to reducing the frame length, so we decided the code complexity not to be worth it.
+Another quality enhancement we considered was using the \mbox{Arduino's} behaviour of interrupting on received data. If we send the frame in equally spaced sub-frame chunks, the "bright spots" won't only appear at frame boundaries, but also whenever the Arduino is interrupted during the actual drawing. This will have the effect of spreading out the brightness discrepancies (\autoref{fig:interrupt-hack}), but is limited, because if we split the frames too much we will arrive at the first issue of inefficiently using the USB protocol and bottlenecking the transfer rate. In the end, the results were virtually identical to reducing the frame length, so we decided the code complexity not to be worth it.
 
 \begin{figure}[h]
 \centering \def\svgwidth{0.7\linewidth} \input{interrupt-hack.pdf_tex}
@@ -148,17 +149,98 @@ Another quality optimisation we considered was taking advantage of the Arduino's
 
 \section{Static and animated demonstration}
 
-For the complete proof of concept, we 
+For the complete proof of concept, we combine the two functionalities presented in the previous sections in a single system. The Arduino shall start up displaying a fixed "splash screen", and repeatedly attempt a handshake over serial with a compatible controller program, following a very simple communication protocol.
+
+\begin{multicols}{2}
+
+\noindent Controller handshake
+
+\begin{lstlisting}
+serial.recvuntil(b"Hello?\r\n")
+serial.send(b"!")
+serial.recvuntil("Hello!\r\n")
+N = int(serial.recvline()
+        .decode().strip())
+\end{lstlisting}
+
+\columnbreak
+
+\noindent Arduino handshake
+
+\begin{lstlisting}
+long last = millis();
+do {
+  // draw logo
+  for (int i = 0; i < num; i++) {
+    point(logo[i].x, logo[i].y);
+  }
+  
+  // try handshake every 500ms
+  long now = millis();
+  if (now - last > 500) {
+    Serial.println("Hello?");
+    last = now;
+  }
+} while (Serial.read() != '!');
+Serial.println("Hello!");
+Serial.println(N);
+\end{lstlisting}
+
+\end{multicols}
+
+During the handshake, the Arduino communicates the length of its point buffer (i.e., the frame length), which is used by the controlling program to split the path into correctly sized frames. A stereo wav file is used as a source for the path animation data. The controller parses the wav file in chunks, converts the 16 bit data to values in the expected DAC range, and re-packs the values in a binary format understood by the Arduino:
+
+\begin{lstlisting}
+for _ in range(wav.getnframes() // n):
+    wav_data = wav.readframes(n)
+    
+    # map values to [0, 1]
+    samples = [(a / 65536 + 0.5, b / 65536 + 0.5)
+        for a, b in struct.iter_unpack("hh", wav_data)]
+    assert all(0 <= a <= 1 and 0 <= b <= 1 for a, b in samples)
+
+	# repack remapped data to {uint16_t X; uint8_t Y;} 
+    serial.send(b''.join(
+        struct.pack("<HB", int(a*728), int(b*255))
+        for a,b in samples
+    ))
+\end{lstlisting}
+
+The Arduino fills up a fixed size buffer with data from the serial interface, and then draws the points in a loop:
+
+\begin{lstlisting}
+unsigned int recvd = 0, rem = sizeof(buf);
+while (rem > 0) {
+  const auto count = Serial.readBytes((char*) buf + recvd, rem);
+  recvd += count;
+  rem -= count;
+}
+for (int i = 0; i < N; i++) {
+  point(buf[i].x, buf[i].y);
+}
+\end{lstlisting}
+
+The device starts by displaying the TUCN logo as seen in \autoref{fig:tucn-full}. When the controller software is started, the Arduino switches to the live streamed points, as seen in the following images. (Jerobeam Fenderson -- Planets, Blocks, Shrooms, Reconstruct) \href{https://youtu.be/MOuCXOf-fcU}{A full demonstration can be found on Youtube}.
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.49\textwidth]{images/demo1.png}\hspace{0.01\textwidth}
+\includegraphics[width=0.49\textwidth]{images/demo2.png}\vspace{0.01\textwidth}
+\includegraphics[width=0.49\textwidth]{images/demo3.png}\hspace{0.01\textwidth}
+\includegraphics[width=0.49\textwidth]{images/demo4.png}
+\end{figure}
 
 \newpage
 \begin{appendices}
 \section{SVG path to C header conversion}
 \label{appendix:svg2header}
+\href{https://github.com/trupples/oscilloscope-graphics/blob/main/convert-svg-to-header.js}{This code is available on github.}
 \lstinputlisting{convert-svg-to-header.js}
 
 \newpage
 \section{Basic signal generation}
 \label{appendix:staticvector}
+\href{https://github.com/trupples/oscilloscope-graphics/blob/main/static-vector/static-vector.ino}{This code is available on github.}
 \lstinputlisting{static-vector/static-vector.ino}
 
 \newpage
