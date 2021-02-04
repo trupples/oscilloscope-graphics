@@ -68,10 +68,9 @@ We aim to develop an easily programmable system for processing vector graphics o
 \newpage
 \begin{figure}[h]
 \centering
-\includegraphics[width=0.9\textwidth]{images/demo-tucn.png}
+\includegraphics[width=0.85\textwidth]{images/demo-tucn.png}
 \caption{Full display of the TUCN logo}
 \end{figure}
-\vspace{-1em} % Ugly hack to prevent a widow
 \section{Static signal generation}
 
 To confirm the feasibility of the project, we start with a rudimentary software stack that enables programming an Arduino with a fixed, two-channel waveform corresponding to the X and Y coordinates of a point walking along a given path. The software consists of some javascript code that converts the first SVG <path> of the current document into a C header file containing a list of points (\autoref{appendix:svg2header}) and some Arduino code that iterates through the generated points and outputs each coordinate pair to the suitable ports (\autoref{appendix:staticvector}). At the hardware level, we require two DACs of sufficient resolution and sample rate, which motivates our choice of the Arduino MKR Vidor 4000, since it has a builtin 10-bit DAC, meaning we only have to implement a single DAC externally.
@@ -127,9 +126,29 @@ Regardless of DAC design, an issue arises whereby signal bandwidth limitations (
 
 Among prior art, so called "Oscilloscope music", especially \href{https://www.youtube.com/playlist?list=PLFgoUhNvMLrr8izq38HX6rjFR-nkfklxw}{Jerobeam Fenderson's work}, stands out for its exquisite combination of graphics and sound as part of the same medium. Such works of art meticulously coordinate the two waveforms to both draw discernible shapes and animations, as well as to sound like music if interpreted as sound instead of beam coordinates.
 
-To be able to display such works, we implement an audio streaming system, whereby the controlling computer sends uncompressed 18-bit-per-sample, 192KHz sample rate audio, and the controlled Arduino receives the data and displays it.
+To be able to display such works, we implement a signal streaming system, whereby the controlling computer sends uncompressed 18-bit-per-sample, 192KHz sample rate audio, and the controlled Arduino receives the data and displays it. While in principle this seems like a rather basic task, in practice it is riddled with various challenges. Ideally, we would send one sample at a time, and while the computer waits for the correct time for the next sample, the beam would stay still on the current sample, but this very inefficiently uses the USB protocol and is very slow, not allowing us to achieve 192KHz. We must group together multiple samples in so-called frames, and have the Arduino cycle through the samples of each frame in the time it takes to receive the next frame. The issue that arises is related to the fact that we cannot control the beam intensity, so when the Arduino is waiting and processing serial data, the beam will stay put for a significant period of time, accumulating to a bright spot on the screen. The longer the frames, the more time it will spend receiving and not moving the beam, leading to a tradeoff between frame lengths and image quality. (\autoref{fig:recv-alias})
 
-TODO
+Another quality optimisation we considered was taking advantage of the Arduino's behaviour of interrupting on received data. If we send the frame in equally-spaced sub-frame chunks, the "bright spots" won't only appear at frame boundaries, but also whenever the Arduino is interrupted during the actual drawing. This will have the effect of spreading out the brightness discrepancies (\autoref{fig:interrupt-hack}), but is limited, because if we split the frames too much we will arrive at the first issue of inefficiently using the USB protocol and bottlenecking the transfer rate. In the end, the results were virtually identical to reducing the frame length, so we decided the code complexity not to be worth it.
+
+\begin{figure}[h]
+\centering \def\svgwidth{0.7\linewidth} \input{interrupt-hack.pdf_tex}
+\caption{Appearance of normal frames versus sub-frames.}
+\label{fig:interrupt-hack}
+\end{figure}
+
+\begin{figure}[p]
+\centering
+\includegraphics[width=0.49\textwidth]{images/recv-alias-16.png}\hspace{0.01\textwidth}
+\includegraphics[width=0.49\textwidth]{images/recv-alias-256.png}\vspace{0.01\textwidth}
+\includegraphics[width=0.49\textwidth]{images/recv-alias-2048.png}\hspace{0.01\textwidth}
+\includegraphics[width=0.49\textwidth]{images/recv-alias-anim.png}
+\caption{Bright spots appear when the Arduino is idling for more sample data, or processing it. In order, 16 samples/frame, 256 samples/frame, 2048 samples/frame for a circle consisting of 1000 samples, and 192 samples/frame during an arbitrary animation.}
+\label{fig:recv-alias}
+\end{figure}
+
+\section{Static and animated demonstration}
+
+For the complete proof of concept, we 
 
 \newpage
 \begin{appendices}
